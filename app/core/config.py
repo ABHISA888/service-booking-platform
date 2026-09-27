@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     VERSION: str = "0.1.0"
     ENV: str = "development"
 
+    DATABASE_URL: str = "postgresql://booking_user:booking_password@localhost:5432/booking_db"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
