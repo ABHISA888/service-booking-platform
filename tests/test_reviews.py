@@ -197,6 +197,42 @@ def test_invalid_rating_rejected(client: TestClient, seed_users: dict):
     assert rev_invalid.status_code == 422
 
 
+def test_cancelled_booking_cannot_be_reviewed(client: TestClient, seed_users: dict):
+    customer1 = seed_users["customer1"]
+    provider1 = seed_users["provider1"]
+
+    start = datetime.now(UTC) + timedelta(days=3)
+    end = start + timedelta(hours=1)
+
+    res = client.post(
+        "/bookings",
+        headers=get_headers_for_user(customer1),
+        json={
+            "provider_id": provider1.id,
+            "service_name": "Electrical Repair",
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+        },
+    )
+    b_id = res.json()["id"]
+
+    # Mark cancelled
+    client.put(
+        f"/bookings/{b_id}",
+        headers=get_headers_for_user(customer1),
+        json={"status": "cancelled"},
+    )
+
+    # Attempt review on cancelled booking -> FAILS (400 Bad Request)
+    rev_res = client.post(
+        f"/bookings/{b_id}/review",
+        headers=get_headers_for_user(customer1),
+        json={"rating": 5, "comment": "Review on cancelled booking"},
+    )
+    assert rev_res.status_code == 400
+    assert "completed" in rev_res.json()["detail"]
+
+
 @patch("app.api.reviews.enqueue_summary_job")
 def test_review_summarize_endpoint(mock_enqueue, client: TestClient, seed_users: dict):
     mock_enqueue.return_value = "mock-job-id-12345"
