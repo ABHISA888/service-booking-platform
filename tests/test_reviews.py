@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -100,7 +101,7 @@ def test_review_creation_workflow(client: TestClient, seed_users: dict):
     start = datetime.now(UTC) + timedelta(days=1)
     end = start + timedelta(hours=1)
 
-    # 1. Create booking (starts pending)
+    # 1. Create booking
     res = client.post(
         "/bookings",
         headers=get_headers_for_user(customer1),
@@ -194,3 +195,20 @@ def test_invalid_rating_rejected(client: TestClient, seed_users: dict):
         json={"rating": 6, "comment": "Too high rating"},
     )
     assert rev_invalid.status_code == 422
+
+
+@patch("app.api.reviews.enqueue_summary_job")
+def test_review_summarize_endpoint(mock_enqueue, client: TestClient, seed_users: dict):
+    mock_enqueue.return_value = "mock-job-id-12345"
+    provider1 = seed_users["provider1"]
+
+    response = client.post(
+        "/reviews/summarize",
+        headers=get_headers_for_user(provider1),
+        json={"provider_id": provider1.id},
+    )
+    assert response.status_code == 202
+    data = response.json()
+    assert data["job_id"] == "mock-job-id-12345"
+    assert "queued" in data["message"]
+    mock_enqueue.assert_called_once_with(provider_id=provider1.id)

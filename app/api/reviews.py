@@ -1,16 +1,27 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import get_current_user
 from app.db.database import get_db
 from app.models.booking import Booking, BookingStatus
 from app.models.review import Review
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.review import ReviewCreate, ReviewResponse
+from app.services.review_queue import enqueue_summary_job
 
 router = APIRouter(tags=["Reviews"])
+
+
+class SummarizeRequest(BaseModel):
+    provider_id: int
+
+
+class SummarizeResponse(BaseModel):
+    message: str
+    job_id: str
 
 
 @router.post(
@@ -63,3 +74,34 @@ def create_review(
     db.commit()
     db.refresh(review)
     return review
+
+
+@router.post(
+    "/reviews/summarize",
+    response_model=SummarizeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def trigger_review_summarization(
+    request: SummarizeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    # Authorization: Admin can summarize any provider; Provider can summarize self
+    if current_user.role == UserRole.PROVIDER and current_user.id != request.provider_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Providers can only trigger review summarisation for themselves",
+        )
+
+    provider = db.query(User).filter(User.id == request.provider_id).first()
+    if not provider or provider.role != UserRole.PROVIDER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid provider ID: user does not exist or is not a provider",
+        )
+
+    job_id = enqueue_summary_job(provider_id=request.provider_id)
+    return SummarizeResponse(
+        message="Review summarisation job queued successfully",
+        job_id=job_id,
+    )
